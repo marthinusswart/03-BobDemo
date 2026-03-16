@@ -490,6 +490,8 @@ int main()
 	custom->intreq = (1 << INTB_VERTB); // reset vbl req
 	short x = 5;
 
+	KPrintF("Starting Blit Loop!\n");
+
 	while (!MouseLeft())
 	{
 		Wait10();
@@ -535,6 +537,8 @@ int main()
 		// debug_rect(f + 90, 190 * 2, f + 400, 220 * 2, 0x000000ff);		   // 0x00RRGGBB
 		// debug_text(f + 130, 209 * 2, "This is a WinUAE debug overlay", 0x00ff00ff);
 	}
+
+	KPrintF("Exit Blit Loop!\n");
 
 #ifdef MUSIC
 	p61End();
