@@ -11,7 +11,7 @@
 #include <hardware/intbits.h>
 
 // config
-#define MUSIC
+#define MUSIC_OFF
 
 struct ExecBase *SysBase;
 volatile struct Custom *custom;
