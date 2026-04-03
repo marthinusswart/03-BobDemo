@@ -160,6 +160,80 @@ void FreeSystem()
 __attribute__((always_inline)) inline short MouseLeft() { return !((*(volatile UBYTE *)0xbfe001) & 64); }
 __attribute__((always_inline)) inline short MouseRight() { return !((*(volatile UWORD *)0xdff016) & (1 << 10)); }
 
+// CIA-A Keyboard registers
+#define CIAA_PRA   ((volatile UBYTE *)0xBFE001)  // Peripheral Data Register A
+#define CIAA_DDRA  ((volatile UBYTE *)0xBFE201)  // Data Direction Register A
+#define CIAA_SDR   ((volatile UBYTE *)0xBFEC01)  // Serial Data Register (keyboard scan codes)
+#define CIAA_ICR   ((volatile UBYTE *)0xBFED01)  // Interrupt Control Register
+
+// Keyboard scan codes (can vary by keyboard model)
+#define KEY_ESC    0x45  // Standard Amiga ESC
+#define KEY_ESC_ALT1 0x3B // Alternative ESC scancode
+#define KEY_ESC_ALT2 0x75 // Another ESC variant (seen on some keyboards)
+
+// Global keyboard state
+volatile UBYTE lastKeyPressed = 0xFF;
+volatile UBYTE debugKeyCode = 0xFF;  // For debug output
+volatile UBYTE debugKeyIsUp = 0;
+
+// Initialize keyboard hardware
+void InitKeyboard()
+{
+	// Clear any pending keyboard interrupts
+	// The CIA serial port handles handshaking automatically
+	(void)*CIAA_ICR;
+	(void)*CIAA_SDR;
+}
+
+// Read raw keyboard scancode (returns 0xFF if no key event)
+__attribute__((always_inline)) inline UBYTE ReadKeyboard()
+{
+	UBYTE icr = *CIAA_ICR;  // Read and clear interrupt status
+	if (icr & 0x08) {       // Check if SP (serial port/keyboard) interrupt pending
+		UBYTE keycode = *CIAA_SDR;  // Read the raw scancode
+		// The CIA hardware handles handshaking automatically when SDR is read
+		return keycode;
+	}
+	return 0xFF;  // No key event
+}
+
+// Poll keyboard and update global state
+__attribute__((always_inline)) inline void PollKeyboard()
+{
+	UBYTE key = ReadKeyboard();
+	if (key != 0xFF) {
+		// Store for debug output (done outside interrupt)
+		debugKeyCode = key;
+		debugKeyIsUp = (key & 0x80) ? 1 : 0;
+
+		// Bit 7 indicates key up (1) or key down (0)
+		if (!(key & 0x80)) {
+			// Key down event - store it
+			lastKeyPressed = key;
+		}
+	}
+}
+
+// Check if a specific key was pressed (checks last key down event)
+__attribute__((always_inline)) inline short WasKeyPressed(UBYTE scancode)
+{
+	// Check if the last key pressed matches and was a key-down event (bit 7 = 0)
+	if (lastKeyPressed == scancode) {
+		lastKeyPressed = 0xFF;  // Clear it so we don't detect it again
+		return 1;
+	}
+	return 0;
+}
+
+// Check if ESC was pressed (handles multiple possible scancodes)
+__attribute__((always_inline)) inline short WasEscPressed()
+{
+	if (WasKeyPressed(KEY_ESC) || WasKeyPressed(KEY_ESC_ALT1) || WasKeyPressed(KEY_ESC_ALT2)) {
+		return 1;
+	}
+	return 0;
+}
+
 // DEMO - INCBIN
 volatile short frameCounter = 0;
 // INCBIN(colors, "image.pal")
@@ -329,6 +403,9 @@ static __attribute__((interrupt)) void interruptHandler()
 	custom->intreq = (1 << INTB_VERTB);
 	custom->intreq = (1 << INTB_VERTB); // reset vbl req. twice for a4000 bug.
 
+	// Poll keyboard every frame
+	PollKeyboard();
+
 	// modify scrolling in copper list
 	if (scroll)
 	{
@@ -426,6 +503,9 @@ int main()
 	TakeSystem();
 	WaitVbl();
 
+	// Initialize keyboard for polling
+	InitKeyboard();
+
 	char *test = (char *)AllocMem(2502, MEMF_ANY);
 	memset(test, 0xcd, 2502);
 	memclr(test + 2, 2502 - 4);
@@ -490,12 +570,33 @@ int main()
 	custom->intreq = (1 << INTB_VERTB); // reset vbl req
 	short x = 5;
 
-	KPrintF("Starting Blit Loop!\n");
+	// Clear any spurious keyboard data before entering main loop
+	lastKeyPressed = 0xFF;
+	debugKeyCode = 0xFF;
+
+	KPrintF("Starting Blit Loop! Press ESC or left mouse button to exit.\n");
 
 	while (!MouseLeft())
 	{
 		Wait10();
+
+		// Check for ESC key and break if pressed
+		if (WasEscPressed()) {
+			KPrintF("ESC pressed, exiting loop.\n");
+			break;
+		}
+
 		int f = frameCounter & 255;
+
+		// Debug: print keyboard events from main loop (not interrupt)
+		if (debugKeyCode != 0xFF) {
+			if (debugKeyIsUp) {
+				KPrintF("Key UP: 0x%02lx (key was 0x%02lx)\n", (ULONG)debugKeyCode, (ULONG)(debugKeyCode & 0x7F));
+			} else {
+				KPrintF("Key DOWN: 0x%02lx\n", (ULONG)debugKeyCode);
+			}
+			debugKeyCode = 0xFF;  // Clear it
+		}
 
 		// blit bob2 - 64x64, 5 bitplanes + mask
 		int fps = 1;   // refresh every fps frames
